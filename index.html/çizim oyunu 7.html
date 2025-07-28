@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<title> Çizim Oyunu </title>
+<style>
+  body {
+    margin: 0;
+    font-family: sans-serif;
+    background: #f0f0f0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  header {
+    background: #4a90e2;
+    color: white;
+    padding: 15px;
+    font-size: 1.5rem;
+    width: 100%;
+    text-align: center;
+  }
+  #controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 10px;
+    justify-content: center;
+  }
+  #layerControls {
+    margin-bottom: 10px;
+    text-align: center;
+  }
+  #canvasContainer {
+    position: relative;
+    width: 900px;
+    height: 600px;
+    border: 2px solid #444;
+    border-radius: 10px;
+    background: white;
+  }
+  canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    border-radius: 10px;
+  }
+  button, input, select {
+    padding: 8px;
+    font-size: 1rem;
+    border-radius: 5px;
+    border: none;
+    background: #4a90e2;
+    color: white;
+  }
+</style>
+</head>
+<body>
+
+<header id="welcome"></header>
+
+<div id="layerControls">
+  <button id="addLayerBtn">➕ Katman Ekle</button>
+  <select id="layerSelect"></select>
+</div>
+
+<div id="controls">
+  <button id="undoBtn">↩️ Geri Al</button>
+  <button id="clearBtn">🧹 Temizle</button>
+  <button id="saveBtn">💾 Kaydet</button>
+  <label>Renk: <input type="color" id="colorPicker" value="#000000"></label>
+  <label>Boyut: <input type="range" id="brushSize" min="1" max="50" value="5"></label>
+  <label>Fırça:
+    <select id="brushType">
+      <option value="round">Daire</option>
+      <option value="square">Kare</option>
+      <option value="fill">Dolgu</option>
+      <option value="spray">Sprey</option>
+      <option value="eraser">Silgi</option>
+    </select>
+  </label>
+</div>
+
+<div id="canvasContainer"></div>
+
+<script>
+let username = localStorage.getItem('username');
+if (!username) {
+  username = prompt('Adınızı girin:');
+  if (username) localStorage.setItem('username', username);
+}
+document.getElementById('welcome').innerText = `🎨 Hoş geldin, ${username || 'Ziyaretçi'}!`;
+
+const canvasContainer = document.getElementById('canvasContainer');
+const layerSelect = document.getElementById('layerSelect');
+const addLayerBtn = document.getElementById('addLayerBtn');
+
+const colorPicker = document.getElementById('colorPicker');
+const brushSize = document.getElementById('brushSize');
+const brushType = document.getElementById('brushType');
+const undoBtn = document.getElementById('undoBtn');
+const clearBtn = document.getElementById('clearBtn');
+const saveBtn = document.getElementById('saveBtn');
+
+let layers = [];
+let activeLayerIndex = 0;
+let drawing = false;
+let lastX = 0;
+let lastY = 0;
+
+function createLayer() {
+  const newCanvas = document.createElement('canvas');
+  newCanvas.width = 900;
+  newCanvas.height = 600;
+  newCanvas.style.position = 'absolute';
+  newCanvas.style.top = '0';
+  newCanvas.style.left = '0';
+  newCanvas.style.borderRadius = '10px';
+  // Arka plan beyaz olsun sadece en alt katmanda:
+  if (layers.length === 0) newCanvas.style.background = 'white';
+  else newCanvas.style.background = 'transparent';
+
+  canvasContainer.appendChild(newCanvas);
+  layers.push(newCanvas);
+
+  const option = document.createElement('option');
+  option.value = layers.length - 1;
+  option.textContent = `Katman ${layers.length}`;
+  layerSelect.appendChild(option);
+
+  layerSelect.value = layers.length - 1;
+  activeLayerIndex = layers.length - 1;
+
+  return newCanvas.getContext('2d');
+}
+
+let ctx = createLayer();
+
+layerSelect.addEventListener('change', () => {
+  activeLayerIndex = parseInt(layerSelect.value);
+  ctx = layers[activeLayerIndex].getContext('2d');
+});
+
+addLayerBtn.addEventListener('click', () => {
+  ctx = createLayer();
+  saveState();
+});
+
+function saveState() {
+  if (!layers[activeLayerIndex].history) layers[activeLayerIndex].history = [];
+  layers[activeLayerIndex].history.push(layers[activeLayerIndex].toDataURL());
+  if (layers[activeLayerIndex].history.length > 20) layers[activeLayerIndex].history.shift();
+}
+
+function undo() {
+  if (!layers[activeLayerIndex].history) return;
+  const data = layers[activeLayerIndex].history.pop();
+  if (!data) return;
+  const img = new Image();
+  img.src = data;
+  img.onload = () => {
+    ctx.clearRect(0, 0, layers[activeLayerIndex].width, layers[activeLayerIndex].height);
+    ctx.drawImage(img, 0, 0);
+  };
+}
+
+function getMousePos(e) {
+  const rect = layers[activeLayerIndex].getBoundingClientRect();
+  return [
+    (e.touches ? e.touches[0].clientX : e.clientX) - rect.left,
+    (e.touches ? e.touches[0].clientY : e.clientY) - rect.top
+  ];
+}
+
+function start(e) {
+  drawing = true;
+  saveState();
+  [lastX, lastY] = getMousePos(e);
+
+  if (brushType.value === 'fill') {
+    floodFill(lastX, lastY, colorPicker.value);
+    drawing = false;
+  }
+}
+
+function stop() {
+  drawing = false;
+  ctx.beginPath();
+}
+
+function draw(e) {
+  if (!drawing || brushType.value === 'fill') return;
+
+  const [x, y] = getMousePos(e);
+
+  ctx.lineWidth = brushSize.value;
+
+  if (brushType.value === 'eraser') {
+    ctx.globalCompositeOperation = 'destination-out'; // Silgi modu
+    ctx.strokeStyle = 'rgba(0,0,0,1)'; // Renk önemli değil, silgi olarak işleyecek
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(lastX, lastY);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  }
+  else if (brushType.value === 'spray') {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = colorPicker.value;
+    for (let i = 0; i < 30; i++) {
+      const angle = Math.random() * 2 * Math.PI;
+      const radius = Math.random() * brushSize.value;
+      const offsetX = Math.cos(angle) * radius;
+      const offsetY = Math.sin(angle) * radius;
+      ctx.fillRect(x + offsetX, y + offsetY, 1, 1);
+    }
+  }
+  else {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = colorPicker.value;
+    ctx.lineCap = brushType.value === 'square' ? 'square' : 'round';
+    ctx.beginPath();
+    ctx.moveTo(lastX, lastY);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  }
+
+  [lastX, lastY] = [x, y];
+}
+
+function floodFill(x, y, fillColor) {
+  const canvasWidth = layers[activeLayerIndex].width;
+  const canvasHeight = layers[activeLayerIndex].height;
+  const imgData = ctx.getImageData(0, 0, canvasWidth, canvasHeight);
+  const data = imgData.data;
+  const startX = Math.floor(x);
+  const startY = Math.floor(y);
+  const startPos = (startY * canvasWidth + startX) * 4;
+
+  const targetColor = [data[startPos], data[startPos + 1], data[startPos + 2], data[startPos + 3]];
+  const fill = hexToRgba(fillColor);
+
+  if (colorsMatchWithTolerance(targetColor, [fill.r, fill.g, fill.b, fill.a], 10)) return;
+
+  const stack = [[startX, startY]];
+
+  while (stack.length) {
+    const [cx, cy] = stack.pop();
+    if (cx < 0 || cy < 0 || cx >= canvasWidth || cy >= canvasHeight) continue;
+
+    const index = (cy * canvasWidth + cx) * 4;
+    const currentColor = [data[index], data[index + 1], data[index + 2], data[index + 3]];
+
+    if (!colorsMatchWithTolerance(currentColor, targetColor, 10)) continue;
+
+    data[index] = fill.r;
+    data[index + 1] = fill.g;
+    data[index + 2] = fill.b;
+    data[index + 3] = fill.a;
+
+    stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
+  }
+  ctx.putImageData(imgData, 0, 0);
+}
+
+function colorsMatchWithTolerance(c1, c2, tolerance) {
+  for (let i = 0; i < 4; i++) {
+    if (Math.abs(c1[i] - c2[i]) > tolerance) return false;
+  }
+  return true;
+}
+
+function hexToRgba(hex) {
+  const bigint = parseInt(hex.replace("#", ""), 16);
+  return { r: (bigint >> 16) & 255, g: (bigint >> 8) & 255, b: bigint & 255, a: 255 };
+}
+
+canvasContainer.addEventListener('mousedown', start);
+canvasContainer.addEventListener('mouseup', stop);
+canvasContainer.addEventListener('mouseleave', stop);
+canvasContainer.addEventListener('mousemove', draw);
+
+canvasContainer.addEventListener('touchstart', e => { e.preventDefault(); start(e); }, { passive: false });
+canvasContainer.addEventListener('touchend', stop);
+canvasContainer.addEventListener('touchcancel', stop);
+canvasContainer.addEventListener('touchmove', e => { e.preventDefault(); draw(e); }, { passive: false });
+
+undoBtn.addEventListener('click', undo);
+clearBtn.addEventListener('click', () => {
+  saveState();
+  ctx.clearRect(0, 0, layers[activeLayerIndex].width, layers[activeLayerIndex].height);
+});
+saveBtn.addEventListener('click', () => {
+  const mergedDataUrl = mergeLayers();
+  const link = document.createElement('a');
+  link.download = `${username || 'cizim'}.png`;
+  link.href = mergedDataUrl;
+  link.click();
+});
+
+function mergeLayers() {
+  const mergedCanvas = document.createElement('canvas');
+  mergedCanvas.width = 900;
+  mergedCanvas.height = 600;
+  const mergedCtx = mergedCanvas.getContext('2d');
+
+  layers.forEach(layer => {
+    mergedCtx.drawImage(layer, 0, 0);
+  });
+
+  return mergedCanvas.toDataURL();
+}
+</script>
+
+</body>
+</html>
